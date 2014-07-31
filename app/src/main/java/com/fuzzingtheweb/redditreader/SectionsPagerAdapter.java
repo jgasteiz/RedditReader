@@ -14,7 +14,7 @@ import java.util.Locale;
 public class SectionsPagerAdapter extends FragmentPagerAdapter {
 
     public final static String[] SECTIONS = {
-            "frontpage", "all", "django", "python", "android"
+            "all", "gifs", "django", "python", "android"
     };
     private final static int NUM_TABS = SECTIONS.length;
 
