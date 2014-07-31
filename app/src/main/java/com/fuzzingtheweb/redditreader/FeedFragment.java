@@ -2,8 +2,11 @@ package com.fuzzingtheweb.redditreader;
 
 
 import android.app.ListFragment;
+import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
+import android.net.ConnectivityManager;
+import android.net.NetworkInfo;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Bundle;
@@ -19,6 +22,7 @@ import android.widget.ArrayAdapter;
 import android.widget.ListView;
 import android.widget.ProgressBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import com.fuzzingtheweb.redditreader.data.FeedDBAdapter;
 
@@ -121,12 +125,20 @@ public class FeedFragment extends ListFragment {
         startActivity(intent);
     }
 
+    /**
+     * Refresh the current subreddit content if the network is available.
+     */
     private void refreshFeed() {
-        showProgressBar();
-        String subReddit = SectionsPagerAdapter.SECTIONS[mSubRedditPosition];
-        Log.v(LOG_TAG, "Active subReddit: " + subReddit);
-        FetchFeedTask fetchFeedTask = new FetchFeedTask(subReddit);
-        fetchFeedTask.execute();
+        if (isNetworkAvailable()) {
+            showProgressBar();
+            String subReddit = SectionsPagerAdapter.SECTIONS[mSubRedditPosition];
+            Log.v(LOG_TAG, "Active subReddit: " + subReddit);
+            FetchFeedTask fetchFeedTask = new FetchFeedTask(subReddit, mDBHelper, this);
+            fetchFeedTask.execute();
+        } else {
+            hideProgressBar();
+            Toast.makeText(getActivity(), "Network is unavailable", Toast.LENGTH_LONG).show();
+        }
     }
 
     private void showProgressBar() {
@@ -139,6 +151,22 @@ public class FeedFragment extends ListFragment {
         mProgressBar.setVisibility(View.GONE);
     }
 
+    /**
+     * Instantiate a connectivity manager and check if there is a network interface
+     * and if it's available.
+     *
+     * @return - true if the network is available
+     */
+    public boolean isNetworkAvailable() {
+        ConnectivityManager manager = (ConnectivityManager) getActivity().getSystemService(Context.CONNECTIVITY_SERVICE);
+        NetworkInfo networkInfo = manager.getActiveNetworkInfo();
+        return networkInfo != null && networkInfo.isConnected();
+    }
+
+    /**
+     * Load the current subreddit content from the database or from the network, if there is
+     * no content in the database.
+     */
     private void loadFeed() {
         String subReddit = SectionsPagerAdapter.SECTIONS[mSubRedditPosition];
         Cursor feedCursor = mDBHelper.fetchSubRedditPosts(subReddit);
@@ -146,7 +174,6 @@ public class FeedFragment extends ListFragment {
         if (feedCursor.getCount() == 0) {
             refreshFeed();
         } else {
-            Log.v(LOG_TAG, "There are items!");
             // Call populateListView with the items, somehow.
             ArrayList<FeedItem> itemsList = new ArrayList<FeedItem>();
 
@@ -164,7 +191,7 @@ public class FeedFragment extends ListFragment {
                 created = feedCursor.getString(feedCursor.getColumnIndex(FeedDBAdapter.COLUMN_CREATED));
                 numComments = feedCursor.getString(feedCursor.getColumnIndex(FeedDBAdapter.COLUMN_NUM_COMMENTS));
 
-                Log.v(LOG_TAG, title + ", " + url + ", " + subReddit);
+                // Log.v(LOG_TAG, title + ", " + url + ", " + subReddit);
                 itemsList.add(i, new FeedItem(
                         title, url, subReddit, domain, id, author,
                         score, thumbnail, permalink, created, numComments));
@@ -172,13 +199,16 @@ public class FeedFragment extends ListFragment {
             }
             feedCursor.close();
 
-            Log.v(LOG_TAG, "List length: " + itemsList.size());
+            // Log.v(LOG_TAG, "List length: " + itemsList.size());
             if (itemsList.isEmpty() == false) {
                 populateListView(itemsList);
             }
         }
     }
 
+    /**
+     * Fills the current subreddit listview with the given array list.
+     */
     public void populateListView(final ArrayList<FeedItem> feed) {
         hideProgressBar();
 
@@ -207,120 +237,6 @@ public class FeedFragment extends ListFragment {
             mListView.setAdapter(feedAdapter);
         } catch (NullPointerException e) {
             Log.e(LOG_TAG, e.getMessage());
-        }
-    }
-
-    /**
-     * Asynctask for making a call to the API.
-     */
-    private class FetchFeedTask extends AsyncTask<Object, Void, JSONObject> {
-
-        private String mSubReddit;
-
-        private final String LOG_TAG = FetchFeedTask.class.getSimpleName();
-        private final String KEY_TITLE = "title";
-        private final String KEY_URL = "url";
-        private final String KEY_DOMAIN = "domain";
-        private final String KEY_REDDIT_ID = "id";
-        private final String KEY_AUTHOR = "author";
-        private final String KEY_SCORE = "score";
-        private final String KEY_THUMBNAIL = "thumbnail";
-        private final String KEY_PERMALINK = "permalink";
-        private final String KEY_CREATED = "created";
-        private final String KEY_NUM_COMMENTS = "num_comments";
-
-
-        public FetchFeedTask(String subReddit) {
-            mSubReddit = subReddit;
-        }
-
-        @Override
-        protected JSONObject doInBackground(Object[] params) {
-            JSONObject jsonResponse = null;
-            StringBuilder builder = new StringBuilder();
-            HttpClient client = new DefaultHttpClient();
-            int responseCode;
-
-            String baseUrl = "http://www.reddit.com/r/" + mSubReddit + ".json";
-
-            HttpGet httpget = new HttpGet(baseUrl);
-
-            try {
-                HttpResponse response = client.execute(httpget);
-                StatusLine statusLine = response.getStatusLine();
-                responseCode = statusLine.getStatusCode();
-
-                Log.v(LOG_TAG, "URL : " + baseUrl);
-                Log.v(LOG_TAG, "Response code: " + responseCode);
-
-                if (responseCode == HttpURLConnection.HTTP_OK) {
-                    HttpEntity entity = response.getEntity();
-                    InputStream content = entity.getContent();
-                    BufferedReader reader = new BufferedReader(new InputStreamReader(content));
-
-                    String line;
-                    while((line = reader.readLine()) != null){
-                        builder.append(line);
-                    }
-
-                    jsonResponse = new JSONObject(builder.toString());
-                } else {
-                    Log.i(LOG_TAG, "Unsuccessful HTTP Response Code: " + responseCode);
-                }
-                Log.i(LOG_TAG, "Code: " + responseCode);
-            } catch (MalformedURLException e) {
-                Log.e(LOG_TAG, e.getMessage());
-            } catch (IOException e) {
-                Log.e(LOG_TAG, e.getMessage());
-            } catch (Exception e) {
-                Log.e(LOG_TAG, e.getMessage());
-            }
-
-            return jsonResponse;
-        }
-
-        @Override
-        protected void onPostExecute(JSONObject jsonResponse) {
-            JSONArray jsonFeed;
-            JSONObject postData;
-            String title, url, domain, id, author, score, thumbnail, permalink, created, numComments;
-
-            ArrayList<FeedItem> items = new ArrayList<FeedItem>();
-
-            if (jsonResponse != null) {
-                try {
-                    jsonFeed = jsonResponse.getJSONObject("data").getJSONArray("children");
-                    for (int i = 0; i < jsonFeed.length(); i++) {
-                        postData = jsonFeed.getJSONObject(i).getJSONObject("data");
-                        title = Html.fromHtml(postData.getString(KEY_TITLE)).toString();
-                        url = postData.getString(KEY_URL);
-                        domain = postData.getString(KEY_DOMAIN);
-                        id = postData.getString(KEY_REDDIT_ID);
-                        author = postData.getString(KEY_AUTHOR);
-                        score = postData.getString(KEY_SCORE);
-                        thumbnail = postData.getString(KEY_THUMBNAIL);
-                        permalink = postData.getString(KEY_PERMALINK);
-                        created = postData.getString(KEY_CREATED);
-                        numComments = postData.getString(KEY_NUM_COMMENTS);
-
-                        items.add(new FeedItem(
-                                title, url, mSubReddit, domain, id, author,
-                                score, thumbnail, permalink, created, numComments));
-                    }
-
-                    Log.v(LOG_TAG, "Deleting existing posts");
-                    mDBHelper.deleteAllSubredditPosts(mSubReddit);
-
-                    Log.v(LOG_TAG, "Creating new posts");
-                    mDBHelper.createPosts(items);
-
-                    Log.v(LOG_TAG, "Populating the list view");
-                    populateListView(items);
-
-                } catch (JSONException e) {
-                    Log.e(LOG_TAG, e.getMessage());
-                }
-            }
         }
     }
 }
